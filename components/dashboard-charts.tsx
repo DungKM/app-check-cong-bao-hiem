@@ -31,7 +31,7 @@ export function ActivityChart({ data }: { data: ActivityPoint[] }) {
         <Tooltip
           contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12 }}
           labelStyle={{ color: '#111827', fontWeight: 600 }}
-          formatter={(v: number) => [v, 'Hồ sơ']}
+          formatter={(v) => [`${v}`, 'Hồ sơ']}
         />
         <Area
           type="monotone" dataKey="count"
@@ -54,7 +54,7 @@ export function WarningsChart({ data }: { data: WarnPoint[] }) {
         <Tooltip
           contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12 }}
           labelStyle={{ color: '#111827', fontWeight: 600 }}
-          formatter={(v: number) => [v, 'Cảnh báo']}
+          formatter={(v) => [`${v}`, 'Cảnh báo']}
         />
         <Bar dataKey="count" radius={[5, 5, 0, 0]}>
           {data.map((d, i) => <Cell key={i} fill={d.color} />)}

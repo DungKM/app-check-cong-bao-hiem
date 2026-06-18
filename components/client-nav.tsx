@@ -27,7 +27,7 @@ export default function ClientNav() {
           <span className="max-w-[120px] truncate text-sm text-slate-200">
             {session.user?.name || session.user?.email}
           </span>
-          {session.user?.role === 'admin' && (
+          {(session.user as any)?.role === 'admin' && (
             <span className="flex items-center gap-1 rounded-full bg-sky-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-300">
               <ShieldCheck className="h-3 w-3" />
               Admin
@@ -51,15 +51,9 @@ export default function ClientNav() {
     <div className="flex items-center gap-2">
       <Link
         href="/auth/login"
-        className="rounded-lg px-4 py-2 text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white"
-      >
-        Đăng nhập
-      </Link>
-      <Link
-        href="/auth/register"
         className="rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-400"
       >
-        Đăng ký
+        Đăng nhập
       </Link>
     </div>
   );

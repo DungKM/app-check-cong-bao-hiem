@@ -15,7 +15,7 @@ export default function HoSoCheckPage() {
   const [tab,       setTab]       = useState<Tab>('inbox');
   const [inboxLoad, setInboxLoad] = useState<InboxLoad>(null);
   const { data: session } = useSession();
-  const isAdmin = session?.user?.role === 'admin';
+  const isAdmin = (session?.user as any)?.role === 'admin';
 
   useEffect(() => {
     if (typeof window !== 'undefined') {

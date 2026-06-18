@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import authOptions from '@/lib/auth';
+import { getSession } from '@/lib/session';
 import clientPromise from '@/lib/mongodb';
 import { ObjectId } from 'mongodb';
 
 export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions as any);
+  const session = await getSession();
   if (!session?.user?.email) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const limit = Math.min(parseInt(new URL(req.url).searchParams.get('limit') || '50'), 100);
@@ -21,7 +20,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions as any);
+  const session = await getSession();
   if (!session?.user?.email) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json();
@@ -29,14 +28,14 @@ export async function POST(req: NextRequest) {
   const result = await client.db().collection('analyses').insertOne({
     ...body,
     userEmail: session.user.email,
-    userName: session.user.name,
+    userName:  session.user.name,
     createdAt: new Date(),
   });
   return NextResponse.json({ id: result.insertedId.toString() }, { status: 201 });
 }
 
 export async function PATCH(req: NextRequest) {
-  const session = await getServerSession(authOptions as any);
+  const session = await getSession();
   if (!session?.user?.email) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const id = new URL(req.url).searchParams.get('id');
