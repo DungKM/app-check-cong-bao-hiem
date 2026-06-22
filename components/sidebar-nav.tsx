@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import {
   LayoutDashboard, FileSearch, Users, LogOut,
-  ShieldCheck, Sparkles, ChevronRight,
+  ShieldCheck, Sparkles, ChevronRight, Layers, ListChecks,
 } from 'lucide-react';
 
 type Props = { role: string; name: string; email: string };
@@ -14,8 +14,9 @@ const SECTIONS = [
   {
     title: 'ĐIỀU HÀNH',
     items: [
-      { href: '/dashboard',            label: 'Tổng quan',       icon: LayoutDashboard },
-      { href: '/dashboard/port-check', label: 'Kiểm tra hồ sơ', icon: FileSearch },
+      { href: '/dashboard',                  label: 'Tổng quan',          icon: LayoutDashboard },
+      { href: '/dashboard/port-check',       label: 'Kiểm tra hồ sơ',    icon: FileSearch },
+      { href: '/dashboard/batch-check',      label: 'Kiểm tra hàng loạt', icon: Layers },
     ],
   },
 ];
@@ -23,7 +24,8 @@ const SECTIONS = [
 const ADMIN_SECTION = {
   title: 'QUẢN TRỊ',
   items: [
-    { href: '/dashboard/user-management', label: 'Người dùng', icon: Users },
+    { href: '/dashboard/quy-tac',         label: 'Quy tắc BH',  icon: ListChecks },
+    { href: '/dashboard/user-management', label: 'Người dùng',  icon: Users },
   ],
 };
 

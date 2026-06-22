@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Upload, Search, RefreshCw, Trash2, PlayCircle,
   Loader2, FileText, Check, X, ChevronLeft, ChevronRight,
-  Cpu, FolderOpen,
+  Cpu, FolderOpen, Layers,
 } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────
@@ -195,9 +196,10 @@ function fmtDT(iso: string) {
 function todayStr()     { return new Date().toISOString().slice(0,10); }
 function yesterdayStr() { const d=new Date(); d.setDate(d.getDate()-1); return d.toISOString().slice(0,10); }
 
-function filterMock(items: InboxItem[], src: SourceTab, search: string, from: string, to: string) {
+function filterMock(items: InboxItem[], src: SourceTab, status: 'all'|'new'|'checked', search: string, from: string, to: string) {
   return items.filter(it => {
-    if (src !== 'all' && it.source !== src) return false;
+    if (src    !== 'all' && it.source !== src)    return false;
+    if (status !== 'all' && it.status !== status) return false;
     if (search && !it.fileName.toLowerCase().includes(search.toLowerCase())) return false;
     if (from && it.receivedAt < from) return false;
     if (to   && it.receivedAt.slice(0,10) > to) return false;
@@ -207,18 +209,21 @@ function filterMock(items: InboxItem[], src: SourceTab, search: string, from: st
 
 // ── Component ──────────────────────────────────────────────
 export default function XmlInbox({ onOpenCheck, isAdmin }: Props) {
-  const [realItems,  setRealItems]  = useState<InboxItem[]>([]);
-  const [realTotal,  setRealTotal]  = useState(-1); // -1 = not loaded yet
-  const [page,       setPage]       = useState(1);
-  const [loading,    setLoading]    = useState(true);
-  const [err,        setErr]        = useState('');
-  const [srcTab,     setSrcTab]     = useState<SourceTab>('all');
-  const [search,     setSearch]     = useState('');
-  const [dateFrom,   setDateFrom]   = useState('');
-  const [dateTo,     setDateTo]     = useState('');
-  const [actionId,   setActionId]   = useState<string | null>(null);
-  const [toast,      setToast]      = useState('');
-  const [uploading,  setUploading]  = useState(false);
+  const router = useRouter();
+  const [realItems,   setRealItems]   = useState<InboxItem[]>([]);
+  const [realTotal,   setRealTotal]   = useState(-1);
+  const [page,        setPage]        = useState(1);
+  const [loading,     setLoading]     = useState(true);
+  const [err,         setErr]         = useState('');
+  const [srcTab,      setSrcTab]      = useState<SourceTab>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'new' | 'checked'>('all');
+  const [search,      setSearch]      = useState('');
+  const [dateFrom,    setDateFrom]    = useState('');
+  const [dateTo,      setDateTo]      = useState('');
+  const [actionId,    setActionId]    = useState<string | null>(null);
+  const [toast,       setToast]       = useState('');
+  const [uploading,   setUploading]   = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
 
   const LIMIT = 50;
@@ -230,6 +235,7 @@ export default function XmlInbox({ onOpenCheck, isAdmin }: Props) {
     try {
       const params = new URLSearchParams({
         source: srcTab, page: String(pg), limit: String(LIMIT),
+        ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
         ...(search   ? { search }         : {}),
         ...(dateFrom ? { from: dateFrom } : {}),
         ...(dateTo   ? { to: dateTo }     : {}),
@@ -244,9 +250,9 @@ export default function XmlInbox({ onOpenCheck, isAdmin }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [srcTab, search, dateFrom, dateTo, page]);
+  }, [srcTab, statusFilter, search, dateFrom, dateTo, page]);
 
-  useEffect(() => { setPage(1); load(1); }, [srcTab, dateFrom, dateTo]);
+  useEffect(() => { setPage(1); load(1); }, [srcTab, statusFilter, dateFrom, dateTo]);
 
   const handleSearch = (e: React.FormEvent) => { e.preventDefault(); setPage(1); load(1); };
 
@@ -260,7 +266,7 @@ export default function XmlInbox({ onOpenCheck, isAdmin }: Props) {
   // Merge real + mock; real items take priority
   const useMock = realTotal === 0;
   const displayItems = useMock
-    ? filterMock(MOCK, srcTab, search, dateFrom, dateTo)
+    ? filterMock(MOCK, srcTab, statusFilter, search, dateFrom, dateTo)
     : realItems;
   const displayTotal = useMock ? displayItems.length : realTotal;
   const totalPages   = Math.ceil(displayTotal / LIMIT);
@@ -304,8 +310,50 @@ export default function XmlInbox({ onOpenCheck, isAdmin }: Props) {
     setPage(1); load(1);
   };
 
+  const toggleSelect = (id: string) =>
+    setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === displayItems.length && displayItems.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(displayItems.map(i => i._id)));
+    }
+  };
+
+  const openBatchCheck = () => {
+    // For mock items, pre-generate XML and cache in sessionStorage
+    for (const id of selectedIds) {
+      if (id.startsWith('mock')) {
+        const item = displayItems.find(i => i._id === id);
+        if (item) {
+          try { sessionStorage.setItem(`batch_xml_${id}`, buildSampleXml(item)); } catch { /* quota */ }
+        }
+      }
+    }
+    const ids = Array.from(selectedIds).join(',');
+    router.push(`/dashboard/batch-check?ids=${encodeURIComponent(ids)}`);
+  };
+
   return (
     <div className="space-y-4">
+
+      {/* Batch selection bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">
+          <span className="text-sm font-semibold text-indigo-700">
+            Đã chọn {selectedIds.size} hồ sơ
+          </span>
+          <button onClick={openBatchCheck}
+            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700 shadow-sm">
+            <Layers className="h-4 w-4" /> Kiểm tra hàng loạt
+          </button>
+          <button onClick={() => setSelectedIds(new Set())}
+            className="ml-auto text-xs text-indigo-400 hover:text-indigo-600">
+            Bỏ chọn tất cả
+          </button>
+        </div>
+      )}
 
       {/* Toast */}
       {toast && (
@@ -328,6 +376,24 @@ export default function XmlInbox({ onOpenCheck, isAdmin }: Props) {
                 srcTab === key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}>
               <Icon className="h-3.5 w-3.5" /> {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Status filter */}
+        <div className="flex rounded-xl border border-gray-200 bg-gray-100 p-1 gap-0.5">
+          {([
+            { key: 'all'     as const, label: 'Tất cả',           dot: ''        },
+            { key: 'new'     as const, label: 'Chưa kiểm tra',    dot: 'bg-orange-400' },
+            { key: 'checked' as const, label: 'Đã kiểm tra',      dot: 'bg-emerald-500' },
+          ]).map(({ key, label, dot }) => (
+            <button key={key}
+              onClick={() => { setStatusFilter(key); setPage(1); }}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                statusFilter === key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}>
+              {dot && <span className={`h-2 w-2 rounded-full ${dot}`} />}
+              {label}
             </button>
           ))}
         </div>
@@ -415,6 +481,12 @@ export default function XmlInbox({ onOpenCheck, isAdmin }: Props) {
           <table className="w-full text-left text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
+                <th className="w-10 px-3 py-3">
+                  <input type="checkbox"
+                    checked={displayItems.length > 0 && selectedIds.size === displayItems.length}
+                    onChange={toggleSelectAll}
+                    className="h-4 w-4 rounded border-gray-300 text-indigo-600" />
+                </th>
                 <th className="px-5 py-3 text-[11px] font-bold uppercase tracking-wide text-gray-400">Tên file</th>
                 <th className="px-5 py-3 text-[11px] font-bold uppercase tracking-wide text-gray-400">Nguồn</th>
                 <th className="px-5 py-3 text-[11px] font-bold uppercase tracking-wide text-gray-400">Mã bệnh / KCB</th>
@@ -425,7 +497,14 @@ export default function XmlInbox({ onOpenCheck, isAdmin }: Props) {
             </thead>
             <tbody className="divide-y divide-gray-50">
               {displayItems.map(item => (
-                <tr key={item._id} className="hover:bg-gray-50/60 transition-colors">
+                <tr key={item._id}
+                  className={`hover:bg-gray-50/60 transition-colors ${selectedIds.has(item._id) ? 'bg-indigo-50/40' : ''}`}>
+                  <td className="px-3 py-3.5">
+                    <input type="checkbox"
+                      checked={selectedIds.has(item._id)}
+                      onChange={() => toggleSelect(item._id)}
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600" />
+                  </td>
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2">
                       <FileText className="h-4 w-4 shrink-0 text-gray-300" />

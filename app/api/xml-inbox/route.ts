@@ -19,6 +19,7 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const source    = searchParams.get('source') || 'all';   // 'all' | 'api' | 'manual'
+  const status    = searchParams.get('status') || 'all';   // 'all' | 'new' | 'checked'
   const search    = searchParams.get('search') || '';
   const dateFrom  = searchParams.get('from');               // 'YYYY-MM-DD'
   const dateTo    = searchParams.get('to');
@@ -36,6 +37,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (source !== 'all') query.source = source;
+  if (status !== 'all') query.status = status;
 
   if (search) query.fileName = { $regex: search, $options: 'i' };
 

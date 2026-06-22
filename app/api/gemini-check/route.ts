@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import path from 'path';
-import fs from 'fs';
-import * as XLSX from 'xlsx';
+import clientPromise from '@/lib/mongodb';
 
 // ── Types ──────────────────────────────────────────────────
 type Rule = {
@@ -20,98 +18,32 @@ type HoSoData = {
   cls:   { ten: string; ma_dv: string; ngay_kq: string }[];
 };
 
-// ── Module-level cache (sống trong worker) ─────────────────
+// ── Cache với TTL 5 phút ───────────────────────────────────
 let rulesCache: Rule[] | null = null;
+let rulesCacheAt = 0;
+const CACHE_TTL = 5 * 60 * 1000;
 
-function strv(v: unknown): string {
-  const s = String(v ?? '').trim();
-  return s === 'nan' || s === 'undefined' ? '' : s;
-}
+async function loadRules(): Promise<Rule[]> {
+  if (rulesCache && Date.now() - rulesCacheAt < CACHE_TTL) return rulesCache;
 
-function loadRules(): Rule[] {
-  if (rulesCache) return rulesCache;
+  const client = await clientPromise;
+  const docs = await client.db()
+    .collection('quy_tac')
+    .find({ active: true })
+    .project({ nhom: 1, ma: 1, ten_chi_phi: 1, can_cu: 1, co_so_thanh_toan: 1, quy_tac_giam_tru: 1 })
+    .sort({ stt: 1 })
+    .toArray();
 
-  const rawPath =
-    process.env.RULES_FILE_PATH ||
-    path.join(process.cwd(), 'MAU_CHUAN_quy_tac_xuat_toan.xlsx');
-
-  // Normalise to OS path (forward slash → backslash on Windows)
-  const filePath = path.resolve(rawPath);
-
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`Không tìm thấy file quy tắc tại: ${filePath}.\nĐặt đường dẫn vào RULES_FILE_PATH trong .env`);
-  }
-
-  const buf = fs.readFileSync(filePath);
-  const wb  = XLSX.read(buf, { cellText: true, cellDates: false });
-  const rows: Rule[] = [];
-
-  for (const sheetName of wb.SheetNames) {
-    const ws = wb.Sheets[sheetName];
-    if (!ws) continue;
-
-    // Thử đọc header ở hàng đầu
-    const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
-    if (raw.length === 0) continue;
-
-    const firstKeys = Object.keys(raw[0]).map(k => k.toLowerCase().trim());
-
-    if (firstKeys.includes('ten_chi_phi')) {
-      // Mẫu chuẩn — header sạch
-      for (const r of raw) {
-        const ten = strv(r['ten_chi_phi'] ?? r['Ten_chi_phi']);
-        if (!ten) continue;
-        rows.push({
-          Nhom:               strv(r['nhom'] ?? r['Nhom'] ?? sheetName),
-          Ma:                 strv(r['ma']   ?? r['Ma']),
-          Ten_chi_phi:        ten,
-          Can_cu:             strv(r['can_cu']             ?? r['Can_cu']),
-          Co_so_thanh_toan:   strv(r['co_so_thanh_toan']  ?? r['Co_so_thanh_toan']),
-          Quy_tac_giam_tru:   strv(r['quy_tac_giam_tru']  ?? r['Quy_tac_giam_tru']),
-        });
-      }
-    } else {
-      // File gốc — tìm header row trong 8 dòng đầu
-      const rawArr = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' }) as unknown[][];
-      let hRow = -1;
-      for (let i = 0; i < Math.min(8, rawArr.length); i++) {
-        const joined = rawArr[i].map(c => String(c).toLowerCase()).join(' ');
-        if (joined.includes('tên chi phí') || joined.includes('ten chi phi') ||
-            joined.includes('tên dịch vụ') || joined.includes('ten dich vu')) {
-          hRow = i; break;
-        }
-      }
-      if (hRow === -1) continue;
-
-      const headers = rawArr[hRow].map(c => String(c).toLowerCase().trim());
-      const col = (...kws: string[]) =>
-        headers.findIndex(h => kws.some(k => h.includes(k)));
-
-      const iT  = col('tên chi phí', 'ten chi phi', 'tên dịch vụ', 'tên chi  phí');
-      const iMa = col('mã dịch vụ', 'mã ', 'ma ');
-      const iCan = col('căn cứ', 'can cu');
-      const iCo  = col('cơ sở', 'co so', 'nội dung');
-      const iQ   = col('giảm trừ', 'giam tru');
-
-      if (iT === -1) continue;
-
-      for (let i = hRow + 1; i < rawArr.length; i++) {
-        const r = rawArr[i] as unknown[];
-        const get = (idx: number) =>
-          idx >= 0 ? strv(String(r[idx] ?? '').replace(/\n/g, ' ')) : '';
-        const ten = get(iT);
-        if (!ten) continue;
-        rows.push({
-          Nhom: String(sheetName).trim(),
-          Ma: get(iMa), Ten_chi_phi: ten,
-          Can_cu: get(iCan), Co_so_thanh_toan: get(iCo), Quy_tac_giam_tru: get(iQ),
-        });
-      }
-    }
-  }
-
-  rulesCache = rows;
-  return rows;
+  rulesCache = docs.map(d => ({
+    Nhom:             String(d.nhom             || ''),
+    Ma:               String(d.ma               || ''),
+    Ten_chi_phi:      String(d.ten_chi_phi      || ''),
+    Can_cu:           String(d.can_cu           || ''),
+    Co_so_thanh_toan: String(d.co_so_thanh_toan || ''),
+    Quy_tac_giam_tru: String(d.quy_tac_giam_tru || ''),
+  }));
+  rulesCacheAt = Date.now();
+  return rulesCache;
 }
 
 // ── Chọn quy tắc liên quan ─────────────────────────────────
@@ -139,10 +71,10 @@ function chonLienQuan(rules: Rule[], info: Record<string, string>, dvkt: HoSoDat
 
   const out: Rule[] = [];
   for (const r of rules) {
-    const rma  = r.Ma.trim();
-    const rten = r.Ten_chi_phi;
+    const rma     = r.Ma.trim();
+    const rten    = r.Ten_chi_phi;
     const codeHit = (rma && maSet.has(rma)) || [...maSet].some(m => m && rten.includes(m));
-    let overlap = 0;
+    let overlap   = 0;
     for (const t of toks(rten)) if (tenToks.has(t)) overlap++;
     if (codeHit || overlap >= 2) { out.push(r); if (out.length >= limit) break; }
   }
@@ -190,9 +122,7 @@ async function callGemini(apiKey: string, model: string, systemPrompt: string, u
   }
 
   const data = await res.json();
-  return (
-    data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') || ''
-  );
+  return data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') || '';
 }
 
 // ── Parse JSON từ response ─────────────────────────────────
@@ -242,7 +172,15 @@ export async function POST(req: NextRequest) {
 
     const { model = 'gemini-2.5-flash', info, thuoc, dvkt, cls } = body;
 
-    const rules    = loadRules();
+    const rules = await loadRules();
+
+    if (rules.length === 0) {
+      return NextResponse.json(
+        { error: 'Chưa có quy tắc nào trong hệ thống. Vui lòng import quy tắc vào trang Quản lý Quy tắc BH.' },
+        { status: 422 },
+      );
+    }
+
     const relevant = chonLienQuan(rules, info, dvkt, thuoc);
 
     const systemPrompt =
@@ -273,8 +211,8 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({
-      results: data,
-      rulesTotal:   rules.length,
+      results:       data,
+      rulesTotal:    rules.length,
       rulesRelevant: relevant.length,
     });
   } catch (err: any) {
